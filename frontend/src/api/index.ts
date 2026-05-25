@@ -68,6 +68,13 @@ export interface HistoryListResponse {
 export interface HistoryDetailResponse {
   entry: HistoryEntry
   report_content: string | null
+  market_report?: string
+  sentiment_report?: string
+  news_report?: string
+  fundamentals_report?: string
+  investment_plan?: string
+  trader_investment_plan?: string
+  final_trade_decision?: string
 }
 
 export interface KeyStatus {
@@ -128,4 +135,17 @@ export function createWebSocket(taskId: string): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const host = window.location.host
   return new WebSocket(`${protocol}://${host}/ws/stream/${taskId}`)
+}
+
+export interface LicenseStatus {
+  activated: boolean
+  machine_code: string
+}
+
+export function getLicenseStatus(): Promise<LicenseStatus> {
+  return api.get('/license').then((r) => r.data)
+}
+
+export function activateLicense(code: string): Promise<{ status: string }> {
+  return api.post('/license', { code }).then((r) => r.data)
 }

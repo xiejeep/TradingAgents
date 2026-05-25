@@ -45,6 +45,31 @@ def _clean_dataframe(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
+def _download_with_cn_fallback(symbol: str, start_str: str, end_str: str):
+    data = yf_retry(lambda: yf.download(
+        symbol,
+        start=start_str, end=end_str,
+        multi_level_index=False, progress=False, auto_adjust=True,
+    ))
+    if not data.empty:
+        return data
+
+    stripped = str(symbol).strip().upper()
+    is_cn = stripped.isdigit() and len(stripped) == 6
+    if not is_cn:
+        return data
+
+    suffix_map = {"6": ".SS", "0": ".SZ", "2": ".SZ", "3": ".SZ"}
+    suffix = suffix_map.get(stripped[0])
+    if suffix:
+        data = yf_retry(lambda: yf.download(
+            stripped + suffix,
+            start=start_str, end=end_str,
+            multi_level_index=False, progress=False, auto_adjust=True,
+        ))
+    return data
+
+
 def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     """Fetch OHLCV data with caching, filtered to prevent look-ahead bias.
 
@@ -74,14 +99,7 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     if os.path.exists(data_file):
         data = pd.read_csv(data_file, on_bad_lines="skip", encoding="utf-8")
     else:
-        data = yf_retry(lambda: yf.download(
-            symbol,
-            start=start_str,
-            end=end_str,
-            multi_level_index=False,
-            progress=False,
-            auto_adjust=True,
-        ))
+        data = _download_with_cn_fallback(symbol, start_str, end_str)
         data = data.reset_index()
         data.to_csv(data_file, index=False, encoding="utf-8")
 

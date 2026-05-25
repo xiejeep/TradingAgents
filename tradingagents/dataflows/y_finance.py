@@ -6,6 +6,36 @@ import yfinance as yf
 import os
 from .stockstats_utils import StockstatsUtils, _clean_dataframe, yf_retry, load_ohlcv, filter_financials_by_date
 
+
+def _try_yf_ticker(symbol: str, start_date: str, end_date: str):
+    """Fetch yfinance data, trying raw symbol first, then CN suffixes if applicable."""
+    data = _fetch_yf(symbol, start_date, end_date)
+    if not data.empty:
+        return data, symbol
+
+    stripped = symbol.strip().upper()
+    is_cn = stripped.isdigit() and len(stripped) == 6
+    if not is_cn:
+        return data, symbol
+
+    suffix_map = {"6": ".SS", "0": ".SZ", "2": ".SZ", "3": ".SZ"}
+    suffix = suffix_map.get(stripped[0])
+    if suffix:
+        suffixed = stripped + suffix
+        data = _fetch_yf(suffixed, start_date, end_date)
+        if not data.empty:
+            return data, suffixed
+    return data, symbol
+
+
+def _fetch_yf(symbol: str, start_date: str, end_date: str):
+    try:
+        ticker = yf.Ticker(symbol.upper())
+        return yf_retry(lambda: ticker.history(start=start_date, end=end_date))
+    except Exception:
+        return pd.DataFrame()
+
+
 def get_YFin_data_online(
     symbol: Annotated[str, "ticker symbol of the company"],
     start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
@@ -15,13 +45,8 @@ def get_YFin_data_online(
     datetime.strptime(start_date, "%Y-%m-%d")
     datetime.strptime(end_date, "%Y-%m-%d")
 
-    # Create ticker object
-    ticker = yf.Ticker(symbol.upper())
+    data, resolved_symbol = _try_yf_ticker(symbol, start_date, end_date)
 
-    # Fetch historical data for the specified date range
-    data = yf_retry(lambda: ticker.history(start=start_date, end=end_date))
-
-    # Check if data is empty
     if data.empty:
         return (
             f"No data found for symbol '{symbol}' between {start_date} and {end_date}"
@@ -41,7 +66,7 @@ def get_YFin_data_online(
     csv_string = data.to_csv()
 
     # Add header information
-    header = f"# Stock data for {symbol.upper()} from {start_date} to {end_date}\n"
+    header = f"# Stock data for {resolved_symbol.upper()} from {start_date} to {end_date}\n"
     header += f"# Total records: {len(data)}\n"
     header += f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 

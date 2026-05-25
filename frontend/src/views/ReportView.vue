@@ -7,14 +7,22 @@ import {
   TrophyOutlined,
   StarOutlined,
 } from '@ant-design/icons-vue'
-import { getReport, getReportPdfUrl, type ReportData } from '@/api'
+import { getReport, getReportPdfUrl, getHistoryDetail, getHistoryPdfUrl, type ReportData } from '@/api'
+import { marked } from 'marked'
 
 const route = useRoute()
 const taskId = route.params.taskId as string
 
 const loading = ref(true)
 const report = ref<ReportData | null>(null)
+const historyReport = ref<string | null>(null)
+const historySections = ref<Record<string, string> | null>(null)
+const decision = ref<string>('')
+const rating = ref<string>('')
 const pdfUrl = ref<string>('')
+const source = ref<'task' | 'history' | null>(null)
+
+marked.setOptions({ breaks: true, gfm: true })
 
 const sections = [
   { key: 'market_report', label: '行情分析' },
@@ -30,29 +38,56 @@ const visibleSections = computed(() =>
   sections.filter((s) => (report.value as any)?.[s.key])
 )
 
-function getRatingColor(rating?: string): string {
-  if (!rating) return 'default'
-  const r = rating.toLowerCase()
-  if (r.includes('buy') || r.includes('买入') || r.includes('strong')) return 'green'
-  if (r.includes('sell') || r.includes('卖出')) return 'red'
-  if (r.includes('hold') || r.includes('持有')) return 'orange'
+const visibleHistorySections = computed(() =>
+  sections.filter((s) => historySections.value?.[s.key])
+)
+
+function getRatingColor(r?: string): string {
+  if (!r) return 'default'
+  const rl = r.toLowerCase()
+  if (rl.includes('buy') || rl.includes('买入') || rl.includes('strong')) return 'green'
+  if (rl.includes('sell') || rl.includes('卖出')) return 'red'
+  if (rl.includes('hold') || rl.includes('持有')) return 'orange'
   return 'blue'
 }
 
-function formatContent(content?: string): string {
-  if (!content) return ''
-  return content
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/\n/g, '<br/>')
+function renderMarkdown(content: string): string {
+  return marked.parse(content) as string
 }
 
 onMounted(async () => {
   try {
-    report.value = await getReport(taskId)
+    const taskResult = await getReport(taskId)
+    if (taskResult.error) throw new Error(taskResult.error)
+    report.value = taskResult
+    decision.value = taskResult.decision || ''
+    rating.value = taskResult.rating || ''
     pdfUrl.value = getReportPdfUrl(taskId)
-  } catch (err: any) {
-    message.error('加载报告失败: ' + err.message)
+    source.value = 'task'
+  } catch {
+    try {
+      const historyResult = await getHistoryDetail(taskId)
+      if ((historyResult as any).error) throw new Error((historyResult as any).error)
+      historyReport.value = historyResult.report_content
+      decision.value = historyResult.entry?.decision || ''
+      rating.value = historyResult.entry?.rating || ''
+      pdfUrl.value = getHistoryPdfUrl(taskId)
+      source.value = 'history'
+
+      const sectionKeys = sections.map((s) => s.key)
+      const extracted: Record<string, string> = {}
+      const raw = historyResult as Record<string, any>
+      for (const key of sectionKeys) {
+        if (raw[key]) {
+          extracted[key] = raw[key]
+        }
+      }
+      if (Object.keys(extracted).length > 0) {
+        historySections.value = extracted
+      }
+    } catch (err: any) {
+      message.error('加载报告失败: ' + (err?.message || '未知错误'))
+    }
   } finally {
     loading.value = false
   }
@@ -60,16 +95,17 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="report-page" style="max-width: 1200px">
+  <div class="report-page">
     <a-page-header
       style="padding: 0; margin-bottom: 24px"
       title="分析报告"
       @back="$router.back()"
     >
       <template #tags>
-        <a-tag v-if="report?.rating" :color="getRatingColor(report.rating)">
-          <StarOutlined /> {{ report.rating }}
+        <a-tag v-if="rating" :color="getRatingColor(rating)">
+          <StarOutlined /> {{ rating }}
         </a-tag>
+        <a-tag v-if="source === 'history'" color="default">历史记录</a-tag>
       </template>
       <template #extra>
         <a-space>
@@ -82,18 +118,14 @@ onMounted(async () => {
     </a-page-header>
 
     <a-spin :spinning="loading">
-      <template v-if="report?.status === 'completed'">
-        <a-card v-if="report.decision" style="margin-bottom: 16px">
-          <div style="display: flex; align-items: center">
-            <TrophyOutlined style="font-size: 24px; color: #faad14" />
-            <div style="margin-left: 12px">
-              <h3 style="margin: 0 0 4px 0">分析决策</h3>
-              <p style="margin: 0; font-size: 16px; color: #333; font-weight: 500">
-                {{ report.decision }}
-              </p>
-            </div>
+      <template v-if="source === 'task' && report?.status === 'completed'">
+        <div v-if="decision" class="decision-box">
+          <TrophyOutlined class="decision-icon" />
+          <div>
+            <h3 class="decision-title">分析决策</h3>
+            <p class="decision-text">{{ decision }}</p>
           </div>
-        </a-card>
+        </div>
 
         <a-card>
           <a-tabs v-if="visibleSections.length > 0">
@@ -103,28 +135,58 @@ onMounted(async () => {
               :tab="s.label"
             >
               <div
-                class="report-body"
-                v-html="formatContent((report as any)[s.key])"
+                class="markdown-body"
+                v-html="renderMarkdown((report as any)[s.key])"
               />
             </a-tab-pane>
           </a-tabs>
-
           <a-empty v-else description="暂无报告内容" />
         </a-card>
       </template>
 
-      <a-result
-        v-else-if="report"
-        status="warning"
-        :title="`状态: ${report.status}`"
-      >
-        <template #extra>
-          <a-button type="primary" @click="$router.push('/')">返回分析页</a-button>
+      <template v-else-if="source === 'history'">
+        <div v-if="decision" class="decision-box">
+          <TrophyOutlined class="decision-icon" />
+          <div>
+            <h3 class="decision-title">分析决策</h3>
+            <p class="decision-text">{{ decision }}</p>
+          </div>
+        </div>
+
+        <template v-if="historySections">
+          <a-card>
+            <a-tabs>
+              <a-tab-pane
+                v-for="s in visibleHistorySections"
+                :key="s.key"
+                :tab="s.label"
+              >
+                <div
+                  class="markdown-body"
+                  v-html="renderMarkdown(historySections[s.key])"
+                />
+              </a-tab-pane>
+            </a-tabs>
+          </a-card>
         </template>
-      </a-result>
+        <a-card v-else-if="historyReport">
+          <div
+            class="markdown-body"
+            v-html="renderMarkdown(historyReport)"
+          />
+        </a-card>
+      </template>
+
+      <template v-else-if="source === 'task' && report">
+        <a-result status="warning" :title="`状态: ${report.status}`">
+          <template #extra>
+            <a-button type="primary" @click="$router.push('/')">返回分析页</a-button>
+          </template>
+        </a-result>
+      </template>
 
       <a-result
-        v-else-if="!loading"
+        v-else-if="!loading && !source"
         status="error"
         title="报告不存在"
       >
@@ -137,11 +199,33 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.report-body {
-  padding: 16px;
-  line-height: 1.8;
+.report-page {
+  max-width: 1200px;
+}
+.decision-box {
+  display: flex;
+  align-items: center;
+  background: linear-gradient(135deg, #f0f5ff, #e6f7ff);
+  border: 1px solid #91d5ff;
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin-bottom: 16px;
+}
+.decision-icon {
+  font-size: 28px;
+  color: #faad14;
+  margin-right: 16px;
+  flex-shrink: 0;
+}
+.decision-title {
+  margin: 0 0 4px 0;
   font-size: 14px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  color: #666;
+}
+.decision-text {
+  margin: 0;
+  font-size: 18px;
+  color: #1a1a1a;
+  font-weight: 600;
 }
 </style>

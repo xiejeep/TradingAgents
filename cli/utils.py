@@ -517,6 +517,57 @@ def ensure_api_key(provider: str) -> Optional[str]:
     return key
 
 
+def is_cn_stock(ticker: str) -> bool:
+    ticker = ticker.strip().upper()
+    if ticker.endswith((".SH", ".SZ", ".BJ")):
+        return True
+    for prefix in ("SH", "SZ", "BJ"):
+        if ticker.startswith(prefix) and ticker[len(prefix):].isdigit():
+            return True
+    code = ticker.split(".")[0]
+    if code.isdigit() and len(code) == 6:
+        return True
+    return False
+
+
+def select_data_vendor(ticker: str) -> str:
+    cn_stock = is_cn_stock(ticker)
+    default_vendor = "akshare" if cn_stock else "yfinance"
+
+    choice = questionary.select(
+        "Select Your [Data Source]:",
+        choices=[
+            questionary.Choice(
+                "Yahoo Finance — global stocks, funds, ETFs (free, no API key)",
+                value="yfinance",
+            ),
+            questionary.Choice(
+                "Alpha Vantage — requires ALPHA_VANTAGE_API_KEY in .env",
+                value="alpha_vantage",
+            ),
+            questionary.Choice(
+                "AKShare — China A-shares, Hong Kong, macro news (free, no API key)",
+                value="akshare",
+            ),
+        ],
+        default=default_vendor,
+        instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
+        style=questionary.Style(
+            [
+                ("selected", "fg:cyan noinherit"),
+                ("highlighted", "fg:cyan noinherit"),
+                ("pointer", "fg:cyan noinherit"),
+            ]
+        ),
+    ).ask()
+
+    if choice is None:
+        console.print("\n[red]No data vendor selected. Exiting...[/red]")
+        exit(1)
+
+    return choice
+
+
 def ask_output_language() -> str:
     """Ask for report output language."""
     choice = questionary.select(

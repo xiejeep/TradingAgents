@@ -1,14 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, h } from 'vue'
+import { computed, ref } from 'vue'
 import {
   LoadingOutlined,
-  CheckCircleOutlined,
-  RobotOutlined,
-  ToolOutlined,
-  FileTextOutlined,
-  ThunderboltOutlined,
 } from '@ant-design/icons-vue'
 import { useAnalysisStore } from '@/stores/analysis'
+import { marked } from 'marked'
+
+marked.setOptions({ breaks: true, gfm: true })
 
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 const store = useAnalysisStore()
@@ -38,6 +36,10 @@ function getAgentLabel(type: string): string {
   }
   return map[type] || type
 }
+
+function renderMarkdown(content: string): string {
+  return marked.parse(content) as string
+}
 </script>
 
 <template>
@@ -63,7 +65,7 @@ function getAgentLabel(type: string): string {
           style="margin-bottom: 16px"
         >
           <div class="report-content">
-            <pre v-if="store.reportSections[activeSection]" style="white-space: pre-wrap; word-break: break-word; font-family: inherit; margin: 0; font-size: 14px; line-height: 1.8">{{ store.reportSections[activeSection] }}</pre>
+            <div v-if="store.reportSections[activeSection]" class="markdown-body" v-html="renderMarkdown(store.reportSections[activeSection])" />
             <a-empty v-else description="等待分析师产出报告..." />
           </div>
         </a-card>
@@ -127,7 +129,7 @@ function getAgentLabel(type: string): string {
         style="margin-bottom: 16px"
       >
         <div class="report-content">
-          <pre style="white-space: pre-wrap; word-break: break-word; font-family: inherit; margin: 0; font-size: 14px; line-height: 1.8">{{ store.reportSections[activeSection] }}</pre>
+          <div class="markdown-body" v-html="renderMarkdown(store.reportSections[activeSection])" />
         </div>
       </a-card>
 
